@@ -45,6 +45,7 @@ newtype RenderState state action slots output =
     , parentNode :: DOM.Node
     , machine :: V.Step (VHTML action slots) DOM.Node
     , renderChildRef :: Ref (ChildRenderer action slots)
+    , finalizedRef :: Ref Boolean
     }
 
 type HTMLThunk slots action =
@@ -162,25 +163,38 @@ renderSpec document container =
         machine <- EFn.runEffectFn1 (V.buildVDom spec) vdom
         let node = V.extract machine
         void $ DOM.appendChild node (HTMLElement.toNode container)
-        pure $ RenderState { machine, node, parentNode: HTMLElement.toNode container, renderChildRef }
-      Just (RenderState { machine, node, parentNode, renderChildRef }) -> do
-        Ref.write child renderChildRef
-        parent <- DOM.parentNode node
-        let parentNode' = fromMaybe parentNode parent
-        nextSib <- DOM.nextSibling node
-        machine' <- EFn.runEffectFn2 V.step machine vdom
-        let newNode = V.extract machine'
-        when (not unsafeRefEq node newNode) do
-          substInParent newNode nextSib parentNode'
+        finalizedRef <- Ref.new false
         pure $ RenderState
-          { machine: machine'
-          , node: newNode
-          , parentNode: parentNode'
+          { machine
+          , node
+          , parentNode: HTMLElement.toNode container
           , renderChildRef
+          , finalizedRef
           }
+      Just rs@(RenderState { machine, node, parentNode, renderChildRef, finalizedRef }) -> do
+        finalized <- Ref.read finalizedRef
+        if finalized then
+          pure rs
+        else do
+          Ref.write child renderChildRef
+          parent <- DOM.parentNode node
+          let parentNode' = fromMaybe parentNode parent
+          nextSib <- DOM.nextSibling node
+          machine' <- EFn.runEffectFn2 V.step machine vdom
+          let newNode = V.extract machine'
+          when (not unsafeRefEq node newNode) do
+            substInParent newNode nextSib parentNode'
+          pure $ RenderState
+            { machine: machine'
+            , node: newNode
+            , parentNode: parentNode'
+            , renderChildRef
+            , finalizedRef
+            }
 
 removeChild :: forall state action slots output. RenderState state action slots output -> Effect Unit
-removeChild (RenderState { node }) = do
+removeChild (RenderState { node, finalizedRef }) = do
+  Ref.write true finalizedRef
   npn <- DOM.parentNode node
   traverse_ (\pn -> DOM.removeChild node pn) npn
 
