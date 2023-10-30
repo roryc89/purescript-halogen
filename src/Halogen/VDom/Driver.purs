@@ -173,7 +173,7 @@ renderSpec document container =
           }
       Just rs@(RenderState { machine, node, parentNode, renderChildRef, finalizedRef }) -> do
         finalized <- Ref.read finalizedRef
-        if finalized then
+        if finalized then do
           pure rs
         else do
           Ref.write child renderChildRef
@@ -193,10 +193,11 @@ renderSpec document container =
             }
 
 removeChild :: forall state action slots output. RenderState state action slots output -> Effect Unit
-removeChild (RenderState { node, finalizedRef }) = do
+removeChild (RenderState { node, finalizedRef, parentNode }) = do
   Ref.write true finalizedRef
-  npn <- DOM.parentNode node
-  traverse_ (\pn -> DOM.removeChild node pn) npn
+  parent <- DOM.parentNode node
+  let parentNode' = fromMaybe parentNode parent
+  DOM.removeChild node parentNode'
 
 substInParent :: DOM.Node -> Maybe DOM.Node -> DOM.Node -> Effect Unit
 substInParent newNode (Just sib) pn = DOM.insertBefore newNode sib pn
